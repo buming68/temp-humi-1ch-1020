@@ -1,0 +1,327 @@
+C51 COMPILER V9.59.0.0   FLASHROM                                                          05/11/2023 16:22:31 PAGE 1   
+
+
+C51 COMPILER V9.59.0.0, COMPILATION OF MODULE FLASHROM
+OBJECT MODULE PLACED IN .\OUTPUT\flashrom.obj
+COMPILER INVOKED BY: D:\Keil_C51\C51\BIN\C51.EXE HARDWARE\flashrom.c LARGE OPTIMIZE(8,SPEED) BROWSE INCDIR(.\USER;.\SYST
+                    -EM;.\HARDWARE) DEBUG OBJECTEXTEND PRINT(.\flashrom.lst) TABS(2) OBJECT(.\OUTPUT\flashrom.obj)
+
+line level    source
+
+   1          
+   2          //  本程序是STC系列的内置flash读写程序。
+   3          #include "flashrom.h"
+   4          #include  "uart.h"
+   5          #include "config.h"
+   6          
+   7          u8 BaudAddr[3] = {BaudFLAG, DefaultAddress, AutoTxTime};          //实际通讯串口1，485接口缺省  速率标志、地址
+             -、是否自动回传（1：自动回传）
+   8          u8 EEPROMTemp[3] = {BaudFLAG, DefaultAddress, AutoTxTime};        //通讯串口1，485接口缺省  速率标志、地址、是
+             -否自动回传（1：自动回传）
+   9          
+  10          u16 Addr_Baud = MOVC_ShiftAddress;            //eeprom 第1个扇区（0开始）
+  11          u16 Addr_485 = 0x0200 +MOVC_ShiftAddress;     //记住 一定要把偏移量加上，第2个扇区（512开始）
+  12          u16 Addr_autoT = 0x0400 +MOVC_ShiftAddress;    //记住 一定要把偏移量加上,eeprom 第3个扇区（1K开始）
+  13          
+  14          uint8 dipkey;
+  15          uint8 loarkey;
+  16          uint8 lora_add, lora_netID, lora_channel;
+  17          
+  18          //========================================================================
+  19          // 函数: void ISP_Disable(void)
+  20          // 描述: 禁止访问ISP/IAP.
+  21          // 参数: non.
+  22          // 返回: non.
+  23          //========================================================================
+  24          void  DisableEEPROM(void)
+  25          {
+  26   1        ISP_CONTR = 0;      //禁止ISP/IAP操作
+  27   1        ISP_CMD   = 0;      //去除ISP/IAP命令
+  28   1        ISP_TRIG  = 0;      //防止ISP/IAP命令误触发
+  29   1        ISP_ADDRH = 0xff;   //清0地址高字节
+  30   1        ISP_ADDRL = 0xff;   //清0地址低字节，指向非EEPROM区，防止误操作
+  31   1      }
+  32          
+  33          //========================================================================
+  34          // 函数: void EEPROM_read_n(u16 EE_address,u8 *DataAddress,u16 number)
+  35          // 描述: 从指定EEPROM首地址读出n个字节放指定的缓冲.
+  36          // 参数: EE_address:  读出EEPROM的首地址.
+  37          //       DataAddress: 读出数据放缓冲的首地址.
+  38          //       number:      读出的字节长度.
+  39          // 返回: non.
+  40          //========================================================================
+  41          void EEPROM_read_n(u16 EE_address,u8 *DataAddress,u16 number)
+  42          {
+  43   1        EA = 0;   //禁止中断
+  44   1        ISP_CONTR = (ISP_EN + ISP_WAIT_FREQUENCY);  //设置等待时间，允许ISP/IAP操作，送一次就够
+  45   1        ISP_READ();                 //送字节读命令，命令不需改变时，不需重新送命令
+  46   1        do
+  47   1        {
+  48   2          ISP_ADDRH = EE_address / 256;   //送地址高字节（地址需要改变时才需重新送地址）
+  49   2          ISP_ADDRL = EE_address % 256;   //送地址低字节
+  50   2          ISP_TRIG();             //先送5AH，再送A5H到ISP/IAP触发寄存器，每次都需要如此
+  51   2                            //送完A5H后，ISP/IAP命令立即被触发启动
+  52   2                            //CPU等待IAP完成后，才会继续执行程序。
+C51 COMPILER V9.59.0.0   FLASHROM                                                          05/11/2023 16:22:31 PAGE 2   
+
+  53   2          _nop_();
+  54   2          *DataAddress = ISP_DATA;      //读出的数据送往
+  55   2          EE_address++;
+  56   2          DataAddress++;
+  57   2        }while(--number);
+  58   1      
+  59   1        DisableEEPROM();
+  60   1        EA = 1;   //重新允许中断
+  61   1      }
+  62          
+  63          
+  64          /******************** 扇区擦除函数 *****************/
+  65          //========================================================================
+  66          // 函数: void EEPROM_SectorErase(u16 EE_address)
+  67          // 描述: 把指定地址的EEPROM扇区擦除.
+  68          // 参数: EE_address:  要擦除的扇区EEPROM的地址.
+  69          // 返回: non.
+  70          //========================================================================
+  71          void EEPROM_SectorErase(u16 EE_address)
+  72          {
+  73   1        EA = 0;   //禁止中断
+  74   1                            //只有扇区擦除，没有字节擦除，512字节/扇区。
+  75   1                            //扇区中任意一个字节地址都是扇区地址。
+  76   1        ISP_CONTR = (ISP_EN + ISP_WAIT_FREQUENCY);  //设置等待时间，允许ISP/IAP操作，送一次就够
+  77   1        ISP_ADDRH = EE_address / 256;     //送扇区地址高字节（地址需要改变时才需重新送地址）
+  78   1        ISP_ADDRL = EE_address % 256;     //送扇区地址低字节
+  79   1        ISP_CONTR = (ISP_EN + ISP_WAIT_FREQUENCY);  //设置等待时间，允许ISP/IAP操作，送一次就够
+  80   1        ISP_ERASE();              //送扇区擦除命令，命令不需改变时，不需重新送命令
+  81   1        ISP_TRIG();
+  82   1        _nop_();
+  83   1        DisableEEPROM();
+  84   1        EA = 1;   //重新允许中断
+  85   1      }
+  86          
+  87          //========================================================================
+  88          // 函数: void EEPROM_write_n(u16 EE_address,u8 *DataAddress,u16 number)
+  89          // 描述: 把缓冲的n个字节写入指定首地址的EEPROM.
+  90          // 参数: EE_address:  写入EEPROM的首地址.
+  91          //       DataAddress: 写入源数据的缓冲的首地址.
+  92          //       number:      写入的字节长度.
+  93          // 返回: non.
+  94          //========================================================================
+  95          void EEPROM_write_n(u16 EE_address,u8 *DataAddress,u16 number)
+  96          {
+  97   1        EA = 0;   //禁止中断
+  98   1      
+  99   1        ISP_CONTR = (ISP_EN + ISP_WAIT_FREQUENCY);  //设置等待时间，允许ISP/IAP操作，送一次就够
+ 100   1        ISP_WRITE();              //送字节写命令，命令不需改变时，不需重新送命令
+ 101   1        do
+ 102   1        {
+ 103   2          ISP_ADDRH = EE_address / 256;   //送地址高字节（地址需要改变时才需重新送地址）
+ 104   2          ISP_ADDRL = EE_address % 256;   //送地址低字节
+ 105   2          ISP_DATA  = *DataAddress;     //送数据到ISP_DATA，只有数据改变时才需重新送
+ 106   2          ISP_TRIG();
+ 107   2          _nop_();
+ 108   2          EE_address++;
+ 109   2          DataAddress++;
+ 110   2        }while(--number);
+ 111   1      
+ 112   1        DisableEEPROM();
+ 113   1        EA = 1;   //重新允许中断
+ 114   1      }
+C51 COMPILER V9.59.0.0   FLASHROM                                                          05/11/2023 16:22:31 PAGE 3   
+
+ 115          
+ 116          //========================================================================
+ 117          // 函数: void EEPROM_Init()
+ 118          // 初始化
+ 119          // 读取EEPROM保存的通信速率标志，从机地址，如果没有读到，就用缺省值，定义在EEPROMTemp
+ 120          // 返回: non.
+ 121          //========================================================================
+ 122          
+ 123          void EEPROM_Init(void)
+ 124          {
+ 125   1        unsigned char strTemp[8];
+ 126   1        
+ 127   1        EEPROM_read_n(Addr_Baud,BaudAddr,1);  //在FLASH的首地址为0xE000处读取个字节存入数组中
+ 128   1        if(*BaudAddr == 0xff) 
+ 129   1          {
+ 130   2              EEPROM_SectorErase(Addr_Baud);         //对FLASH的首地址为0xE000处的扇区进行扇区擦除
+ 131   2              EEPROM_write_n(Addr_Baud,EEPROMTemp,1);   //在FLASH的首地址为写入1个字节
+ 132   2          }
+ 133   1          
+ 134   1        EEPROM_read_n(Addr_485,BaudAddr+1,1); //在FLASH的首地址为0xE000处读取1个字节存入数组中    
+ 135   1        if(*(BaudAddr+1) == 0xff) 
+ 136   1        {
+ 137   2            EEPROM_SectorErase(Addr_485);        //对FLASH的首地址为0x????+200处的扇区进行扇区擦除
+ 138   2            EEPROM_write_n(Addr_485,EEPROMTemp+1,1);    //在FLASH的首地址为写入1个字节
+ 139   2        } 
+ 140   1        
+ 141   1        EEPROM_read_n(Addr_autoT,BaudAddr+2,1);   //在FLASH的首地址为0x????处读取1个字节存入数组中
+ 142   1        if(*(BaudAddr+2) == 0xff) 
+ 143   1        {
+ 144   2            EEPROM_SectorErase(Addr_autoT);        //对FLASH的首地址为0x????+400处的扇区进行扇区擦除
+ 145   2            EEPROM_write_n(Addr_autoT,EEPROMTemp+2,1);    //在FLASH的首地址为写入1个字节
+ 146   2        }
+ 147   1        
+ 148   1            EEPROM_read_n(Addr_Baud,BaudAddr,1);  //在FLASH的首地址为0xE000处读取1个字节存入数组中
+ 149   1            EEPROM_read_n(Addr_485,BaudAddr+1,1); //在FLASH的首地址为0xE000+400 处读取1个字节存入数组中
+ 150   1            EEPROM_read_n(Addr_autoT,BaudAddr+2,1); //在FLASH的首地址为0xE000+400 处读取1个字节存入数组中
+ 151   1          
+ 152   1            sprintf(strTemp, "%c%c%c\r\n", BaudAddr[0],BaudAddr[1],BaudAddr[2]); //浮点数转成字符串 
+ 153   1            SendStringByUart1(strTemp); 
+ 154   1      }
+ 155          
+ 156          //========================================================================
+ 157          // 函数: void EEPROM_Factory()
+ 158          // 恢复出厂设置
+ 159          // 读取EEPROM保存的通信速率标志，从机地址，如果没有读到，就用缺省值，定义在EEPROMTemp
+ 160          // 返回: non.
+ 161          //========================================================================
+ 162          
+ 163          void EEPROM_Factory(void)
+ 164          {       
+ 165   1          EEPROM_write_1(Addr_Baud, EEPROMTemp);  //BaudAddr[0] 写入eeprom  9600
+ 166   1          EEPROM_write_1(Addr_485, EEPROMTemp+1); //BaudAddr[1] 写入eeprom  站址1
+ 167   1          EEPROM_write_1(Addr_autoT, EEPROMTemp+2); //BaudAddr[2] 写入eeprom  0不自动发送
+ 168   1      }
+ 169          
+ 170          
+ 171          //========================================================================
+ 172          // 函数: void EEPROM_write(u16 EE_address,u8 *DataAddress)
+ 173          // 描述: 把缓冲的n个字节写入指定首地址的EEPROM.
+ 174          // 参数: EE_address:  写入EEPROM的首地址.
+ 175          //       DataAddress: 写入源数据的缓冲的首地址.
+ 176          
+C51 COMPILER V9.59.0.0   FLASHROM                                                          05/11/2023 16:22:31 PAGE 4   
+
+ 177          // 返回: non.
+ 178          //========================================================================
+ 179          uint8 EEPROM_write_1(u16 EE_address,u8 *DataAddress)
+ 180          {
+ 181   1        uint8 write_count = 3;
+ 182   1        uint8 tempdata;
+ 183   1        
+ 184   1        while(write_count--)
+ 185   1        {
+ 186   2            EEPROM_SectorErase(EE_address);               //对FLASH的首地址为0xE000+400处的扇区进行扇区擦除
+ 187   2            EEPROM_write_n(EE_address, DataAddress, 1);   //在FLASH的首地址为写入1个字节
+ 188   2            EEPROM_read_n(EE_address, &tempdata,1);     //在FLASH的首地址为0xE000处读取1个字节存入数组中
+ 189   2            if(*DataAddress == tempdata)
+ 190   2              return 0;                                 //成功写入
+ 191   2        }
+ 192   1        return 1;
+ 193   1        
+ 194   1      }
+ 195          
+ 196          /******************************************************
+ 197          函数名：dipkey_init(void)
+ 198          功能：读取配置监测终端的3个参数的开关设置
+ 199          参数：无参数
+ 200          *******************************************************/
+ 201          
+ 202          u8 dipkey_init(void)
+ 203          {
+ 204   1        //uint8 dipkey;
+ 205   1      
+ 206   1        dipkey = ~P2;         //取反
+ 207   1        if((dipkey&0x1f) == 0)  return 1;     //如果低5们表示的地址为0，需要通过串口设置，返回标志1
+ 208   1         
+ 209   1        if((dipkey&0x80) == 0)     BaudAddr[0] = 5;         //波特率0----9600 （代号5） 
+ 210   1        if((dipkey&0x80) == 0x80)  BaudAddr[0] = 6;         //波特率1----19200（代号6）
+ 211   1        
+ 212   1        if((dipkey&0x60) == 0)     BaudAddr[2] = 0;         //0----不自动发送
+ 213   1        if((dipkey&0x60) == 0x20)  BaudAddr[2] = 1;         //0010 0000----自动发送间隔1秒
+ 214   1        if((dipkey&0x60) == 0x40)  BaudAddr[2] = 3;         //0100 0000----自动发送间隔3秒
+ 215   1        if((dipkey&0x60) == 0x60)  BaudAddr[2] = 5;         //0110 0000----自动发送间隔5秒
+ 216   1        
+ 217   1        BaudAddr[1] = dipkey&0x1f;                        //站址  低5位
+ 218   1        
+ 219   1        EEPROM_write_1(Addr_Baud, BaudAddr);              //BaudAddr[0] 写入eeprom  9600
+ 220   1        EEPROM_write_1(Addr_485, BaudAddr+1);             //BaudAddr[1] 写入eeprom  站址1
+ 221   1        EEPROM_write_1(Addr_autoT, BaudAddr+2);           //BaudAddr[2] 写入eeprom  0不自动发送
+ 222   1        
+ 223   1        return 0;
+ 224   1      } 
+ 225          
+ 226          /******************************************************
+ 227          函数名：dipkey_lora_init(void)
+ 228          功能：读取配置LORA的3个参数的开关设置
+ 229          参数：无参数
+ 230          *******************************************************/
+ 231          
+ 232          u8 dipkey_lora_init(void)
+ 233          {
+ 234   1      
+ 235   1        LORA_EN = 0;          //禁止LORA设置，进入传输状态
+ 236   1        loarkey = ~P0;            //取反
+ 237   1      
+ 238   1        if((loarkey&0x0F) == 0) //如果低4位表示的信道地址为0，则DIP设置不起作用，其设置由亿百特的专用软件设定
+C51 COMPILER V9.59.0.0   FLASHROM                                                          05/11/2023 16:22:31 PAGE 5   
+
+ 239   1        {
+ 240   2            lora_add = 00;
+ 241   2            lora_netID =  00;
+ 242   2            lora_channel = 1;       //此为标志位作用，本程序不对LORA进行设置
+ 243   2        }
+ 244   1        else
+ 245   1        {                           //低4位为1-15，则所有8位的LORA设置起作用，3个参数
+ 246   2            lora_add = (loarkey & 0xC0) >> 6 ;
+ 247   2            lora_netID =  (loarkey & 0x30) >> 4;
+ 248   2            lora_channel = 22 + (loarkey & 0x0F);
+ 249   2        }
+ 250   1      
+ 251   1        return 1;
+ 252   1      }
+ 253          
+ 254          /******************************************************
+ 255          函数名：lora_config_init(void)
+ 256          功能：对LORA进行3个参数的设置，其它参数出厂设置
+ 257          参数：无参数
+ 258          *******************************************************/
+ 259          
+ 260          void lora_config_init(void)
+ 261          {
+ 262   1          unsigned char strTemp[9];
+ 263   1          uint8 i;
+ 264   1        
+ 265   1          //S1_USE_P30P31();          //串口1切换到 P30 P31 调试口  
+ 266   1        
+ 267   1          LORA_EN = 1;                //进入LORA设置状态  
+ 268   1          delay_ms(1000); 
+ 269   1          strTemp[0] = 0xC0 ;
+ 270   1          strTemp[1] = 0x00 ;
+ 271   1          strTemp[2] = 0x06 ;
+ 272   1          strTemp[3] = 0x00 ;
+ 273   1          strTemp[4] = lora_add ;
+ 274   1          strTemp[5] = lora_netID ;
+ 275   1          strTemp[6] = 0x64 ;         //62--2.4K  64--9.6K  air speed,  com speed 9.6k
+ 276   1          strTemp[7] = 0x00 ;
+ 277   1          strTemp[8] = lora_channel ;
+ 278   1          
+ 279   1          for(i=0; i<9; i++)          //发送设置命令，共设置6个寄存器
+ 280   1          {
+ 281   2              SendDataByUart1(strTemp[i]);
+ 282   2          } 
+ 283   1          
+ 284   1          //S1_USE_P36P37();          //串口1切换 P36,P37
+ 285   1          
+ 286   1          delay_ms(1000); 
+ 287   1          LORA_EN = 0;                //退出LORA设置，进入传输
+ 288   1      
+ 289   1      } 
+ 290          
+ 291          
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    873    ----
+   CONSTANT SIZE    =      9    ----
+   XDATA SIZE       =     17      39
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+C51 COMPILER V9.59.0.0   FLASHROM                                                          05/11/2023 16:22:31 PAGE 6   
+
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

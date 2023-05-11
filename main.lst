@@ -1,0 +1,140 @@
+C51 COMPILER V9.59.0.0   MAIN                                                              05/11/2023 16:22:31 PAGE 1   
+
+
+C51 COMPILER V9.59.0.0, COMPILATION OF MODULE MAIN
+OBJECT MODULE PLACED IN .\OUTPUT\main.obj
+COMPILER INVOKED BY: D:\Keil_C51\C51\BIN\C51.EXE USER\main.c LARGE OPTIMIZE(8,SPEED) BROWSE INCDIR(.\USER;.\SYSTEM;.\HAR
+                    -DWARE) DEBUG OBJECTEXTEND PRINT(.\main.lst) TABS(2) OBJECT(.\OUTPUT\main.obj)
+
+line level    source
+
+   1            
+   2          /**-------------------------------------------------------------------------------------------------------
+             --
+   3          ** Created by:      zjjohn
+   4          ** Created date:    2022-08-20
+   5          ** Version:         1.0
+   6          ** Descriptions:    SHT30ÎÂ¶È¡¢Êª¶È´«¸ÐÆ÷£¨µ¥Â·£©     
+   7          **********************************************************************************************************
+             -/
+   8          
+   9          #include  "config.h"
+  10          #include  "uart.h"
+  11          #include "sht30.h"
+  12          #include  "wdt.h" 
+  13          #include  "receservice.h" 
+  14          #include "flashrom.h"
+  15          
+  16          
+  17          /***************************************************************************
+  18                                    È«¾Ö±äÁ¿¶¨Òå
+  19          
+  20           **************************************************************************/
+  21          extern uint8 dipkey;              //dip8¿ª¹ØµÄ×´Ì¬£¬ÐèÒª³õÊ¼»¯£¬²¢ÊµÊ±¼à²â
+  22          extern uint8 loarkey;
+  23          extern uint8 lora_add, lora_netID, lora_channel;
+  24          //uint8 CHNUM = 8;                  //ÎÂ¶È´«¸ÐÆ÷µÄÂ·Êý1Â·»ò8Â·
+  25          
+  26          extern void lora_config_init(void);       //ÉèÖÃloraµÄ²ÎÊý
+  27          
+  28          /***************************************************************************
+  29           * Ãè  Êö : Ö÷º¯Êý
+  30           * Èë  ²Î : ÎÞ
+  31           * ·µ»ØÖµ : ÎÞ
+  32           **************************************************************************/
+  33          void  main()
+  34          {    
+  35   1        uint8 autoTxCount = 0;
+  36   1        uint8 i=4,j;
+  37   1        
+  38   1        IO_init();                      //IO¿Ú¿ª»ú³õÊ¼»¯¡¢LED²âÊÔ 
+  39   1        dipkey_lora_init();             //»ñÈ¡LORAÉèÖÃÔÚDIP¿ª¹ØÐÅÏ¢£¬0-3Î»ÐÅµÀ£¨23-48£©£¬4¡¢5Î»ÍøÂçID£¬6¡¢7Î»Ä£¿éµØÖ·
+  40   1      
+  41   1        //uart1_rece_ack();   //µ÷ÊÔÓÃ  ÏòÖ÷»ú»ØËÍ²âÎÂÐÅÏ¢£»
+  42   1        //uart1_auto_tx();    //µ÷ÊÔÓÃ  ×Ô¶¯»Ø´«  
+  43   1        //EEPROM_Init();      //µ÷ÊÔÓÃ  
+  44   1          
+  45   1        if(dipkey_init()) EEPROM_Init();  
+  46   1        Timer0Init();         //³õÊ¼»¯¶¨Ê±Æ÷0,×÷´®¿ÚÖ¡½áÊøµÄ¶¨Ê±Æ÷£¬£³.£µ¸ö½ÓÊÕbautÊ±¼ä³¤¶È
+  47   1        Uart1_Init();         //´®¿Ú1³õÊ¼»¯£¬È±Ê¡£¹£¶£°£°
+  48   1        SHT3X_Init();
+  49   1        EA = 1;               //×ÜÖÐ¶Ï´ò¿ª  
+  50   1      
+  51   1        SendStringByUart1("Ver:1.0B 20220902"), delay_ms(1000);             //ÎÞÏßÍ¨Ñ¶Æô¶¯£¬ÐèÒªÑÓÊ±
+  52   1      
+C51 COMPILER V9.59.0.0   MAIN                                                              05/11/2023 16:22:31 PAGE 2   
+
+  53   1        SendDataByUart1(BaudAddr[0]),SendDataByUart1(BaudAddr[1]),SendDataByUart1(BaudAddr[2]); //ÏÔÊ¾³õÊ¼¹¤×÷²ÎÊ
+             -ý
+  54   1        SendDataByUart1(lora_channel), SendDataByUart1(lora_add), SendDataByUart1(lora_netID);  //´®¿Ú´òÓ¡ÐÅµÀÆµÂÊ
+             -ºÅ£¬µØÖ·£¬ÍøÂçID
+  55   1        
+  56   1        if(lora_channel != 1) lora_config_init();       //ÉèÖÃloraµÄ²ÎÊý£¬Èç¹ûÄ£¿éµØÖ·Îª0£¬Ôò²»×÷ÉèÖÃ£¬ÉèÖÃ±êÖ¾Îª1À´
+             -ÅÐ¶Ï
+  57   1      
+  58   1        WDT_config();           //¿´ÃÅ¹·³õÊ¼»¯  T   12MÆµÂÊÏÂ9 Ãë
+  59   1        SHT3X_Get();            //±£Ö¤µÚÒ»´Î»ñÈ¡Êý¾Ý
+  60   1        while(1)
+  61   1        {
+  62   2      /***********************Í¬Ê±»ñÈ¡1Â·ÎÂ¶ÈºÍ1Â·Êª¶È*********500ºÁÃë¸üÐÂ*********************/      
+  63   2          if(i++==100)
+  64   2          {
+  65   3              SHT3X_Get();                  //SHT30º¯Êý »ñÈ¡ÎÂ¶È¡¢Êª¶È 100*5=500MS
+  66   3              i=0;
+  67   3              LED_R = ~LED_R;  
+  68   3          }
+  69   2          
+  70   2          uart1_rece_proc();                //²éÑ¯ÊÇ·ñÓÐÂÖÑ¯ÃüÁîÊÕµ½£¿
+  71   2          delay_ms(5);                      //5ms¼ä¸ô²éÑ¯ÖÐ¶Ï
+  72   2            
+  73   2          if((BaudAddr[2]) && (j++==200))   //Èç¹û²»Îª0£¬ÔòÒÔ´ËÎª¼ä¸ôÖÜÆÚ£¬×Ô¶¯·¢ËÍ,Í¬Ê±²½½øËÙ¶È1Ãë
+  74   2                                            //5ms X 200 = 1000ms
+  75   2          {
+  76   3            j=0;
+  77   3            if(autoTxCount++ == BaudAddr[2])  
+  78   3            {
+  79   4              uart1_auto_tx();              //×Ô¶¯·¢ËÍÎÂ¶ÈºÍÊª¶ÈÊý¾Ý
+  80   4              autoTxCount = 0; 
+  81   4            }
+  82   3          }
+  83   2          
+  84   2      /***********************DIP¿ª¹Ø±ä»¯£¬¶¯Ì¬ÊÊÓ¦*****************************/   
+  85   2          if(dipkey != ~P2)           
+  86   2          {
+  87   3              if((P2 & 0x1f) == 0x1f) EEPROM_Factory();       //DIP¿ª¹ØµØÖ·Îª0£¬²»Æð×÷ÓÃ£¬³ö³§ÉèÖÃ
+  88   3              IAP_CONTR = 0x20;                 //ÖØÆô¶¯     //¼ì²âÈç¹û¿ª¹Ø±ä»¯£¬ÖØÆô¶¯£¬³õÊ¼»¯
+  89   3          }
+  90   2      /*******************LORA DIP¿ª¹Ø±ä»¯£¬¶¯Ì¬ÊÊÓ¦*****************************/    
+  91   2          if(loarkey != ~P0)            
+  92   2          {     
+  93   3              IAP_CONTR = 0x20;                 //ÖØÆô¶¯     //¼ì²âÈç¹û¿ª¹Ø±ä»¯£¬ÖØÆô¶¯£¬³õÊ¼»¯
+  94   3          }   
+  95   2                  
+  96   2          Wdt_Feed();                           //Î¹¹·9ÃëÖ®ÄÚÐèÒªÎ¹¹·
+  97   2        } 
+  98   1      }  
+  99          
+ 100          
+ 101          /******************************* END*****************************************/
+ 102          
+ 103          
+ 104          
+ 105          
+ 106          
+ 107          
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    231    ----
+C51 COMPILER V9.59.0.0   MAIN                                                              05/11/2023 16:22:31 PAGE 3   
+
+   CONSTANT SIZE    =     18    ----
+   XDATA SIZE       =   ----       3
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)
